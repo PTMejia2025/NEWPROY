@@ -1,13 +1,29 @@
-// services/service.js
-import axios from "axios";
-
-const API = axios.create({
-  baseURL: "http://localhost:4000",
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+// ========================================
+// services/service.js (modo local)
+// ========================================
+import { Lexer } from "../../../Lexer/Lexer.js";
+import { Parser } from "../../../Paser/Parser.js";
 
 export const apiService = {
-  analyzer: (code) => API.post("/analizar", { code }),
+  async analyzer(code) {
+    try {
+      const lexer = new Lexer();
+      const { tokens, errors: lexicalErrors } = lexer.analizar(code);
+
+      const parser = new Parser();
+      const result = parser.analizar(tokens);
+
+      return {
+        data: {
+          tokens,
+          lexicalErrors,
+          syntaxErrors: result.errors || [],
+          pythonCode: result.pythonCode || "",
+        },
+      };
+    } catch (error) {
+      console.error("Error al analizar el código:", error);
+      throw error;
+    }
+  },
 };

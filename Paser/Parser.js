@@ -12,7 +12,15 @@ export class Parser {
   // ======================================================
   // Método principal: recorre todos los tokens
   // ======================================================
-  analizar() {
+  analizar(tokens) {
+    if (Array.isArray(tokens)) this.tokens = tokens;
+
+    if (!Array.isArray(this.tokens)) this.tokens = [];
+
+    this.pos = 0;
+    this.errors = [];
+    this.pythonCode = "";
+    this.indent = "";
     while (this.pos < this.tokens.length) {
       const token = this.tokens[this.pos];
 
@@ -37,6 +45,15 @@ export class Parser {
           this.traducirPrint();
           break;
 
+        case "IDENTIFICADOR":
+          if (this.tokens[this.pos + 1]?.value === "=") {
+            this.traducirAsignacion();
+            break;
+          }
+        case "WHILE":
+          this.traducirWhile();
+          break;
+
         default:
           this.errors.push(
             new Error(
@@ -51,7 +68,7 @@ export class Parser {
           break;
       }
     }
-    return { errors: this.errors, python: this.pythonCode };
+    return { errors: this.errors, pythonCode: this.pythonCode };
   }
 
   // ======================================================
@@ -137,6 +154,50 @@ export class Parser {
   }
 
   // ======================================================
+  // Asignación: ID = expr ;
+  // ======================================================
+  traducirAsignacion() {
+    const id = this.tokens[this.pos]; // IDENTIFICADOR
+    this.pos++; // id
+    this.pos++; // '='
+
+    // Consumir tokens hasta ';' como una "expresión plana"
+    let expr = "";
+    while (
+      this.pos < this.tokens.length &&
+      this.tokens[this.pos].value !== ";"
+    ) {
+      const tok = this.tokens[this.pos];
+
+      if (tok.type === "STRING") expr += `"${tok.value}" `;
+      else if (tok.type === "CHAR") expr += `'${tok.value}' `;
+      else if (
+        tok.type === "RESERVADA" &&
+        (tok.value === "true" || tok.value === "false")
+      ) {
+        expr += tok.value === "true" ? "True " : "False ";
+      } else {
+        expr += tok.value + " ";
+      }
+      this.pos++;
+    }
+
+    if (this.tokens[this.pos]?.value === ";") this.pos++;
+    else
+      this.errors.push(
+        new Error(
+          "Sintáctico",
+          id.value,
+          "Se esperaba ';' al final de la asignación",
+          id.line,
+          id.column
+        )
+      );
+
+    this.pythonCode += `${this.indent}${id.value} = ${expr.trim()}\n`;
+  }
+
+  // ======================================================
   // Traducción de if (...) { ... } else { ... }
   // ======================================================
   traducirIf() {
@@ -153,7 +214,10 @@ export class Parser {
     let condicion = "";
 
     // Construir condición
-    while (this.pos < this.tokens.length && this.tokens[this.pos].value !== ")") {
+    while (
+      this.pos < this.tokens.length &&
+      this.tokens[this.pos].value !== ")"
+    ) {
       const val = this.tokens[this.pos].value;
 
       // evitar == = duplicado
@@ -200,7 +264,13 @@ export class Parser {
     // Validar cierre del bloque if
     if (this.tokens[this.pos]?.value !== "}") {
       this.errors.push(
-        new Error("Sintáctico", "if", "Se esperaba '}' al final del bloque if", 0, 0)
+        new Error(
+          "Sintáctico",
+          "if",
+          "Se esperaba '}' al final del bloque if",
+          0,
+          0
+        )
       );
       return;
     }
@@ -214,7 +284,13 @@ export class Parser {
 
       if (this.tokens[this.pos]?.value !== "{") {
         this.errors.push(
-          new Error("Sintáctico", "else", "Se esperaba '{' después de else", 0, 0)
+          new Error(
+            "Sintáctico",
+            "else",
+            "Se esperaba '{' después de else",
+            0,
+            0
+          )
         );
         return;
       }
@@ -290,35 +366,117 @@ export class Parser {
   }
 
   // ======================================================
-  // Traducción de System.out.println()
+  // Traducción de while (cond) { ... }
   // ======================================================
-  traducirPrint() {
-    this.pos++; // System
-    this.pos += 3; // saltar .out.
-    const println = this.tokens[this.pos];
-    if (!println || println.value !== "println") return;
+  traducirWhile() {
+    this.pos++; // 'while'
 
-    this.pos++; // println
-    if (this.tokens[this.pos]?.value !== "(") return;
-    this.pos++;
+    if (!this.tokens[this.pos] || this.tokens[this.pos].value !== "(") {
+      this.errors.push(
+        new Error(
+          "Sintáctico",
+          "while",
+          "Se esperaba '(' después de while",
+          0,
+          0
+        )
+      );
+      return;
+    }
+    this.pos++; // '('
 
-    let contenido = "";
-    while (this.pos < this.tokens.length && this.tokens[this.pos].value !== ")") {
-      const tok = this.tokens[this.pos];
-      if (tok.type === "STRING") {
-        contenido += `"${tok.value}" `;
-      } else if (tok.type === "CHAR") {
-        contenido += `'${tok.value}' `;
-      } else {
-        contenido += tok.value + " ";
-      }
+    // Construir condición hasta ')'
+    let condicion = "";
+    while (
+      this.pos < this.tokens.length &&
+      this.tokens[this.pos].value !== ")"
+    ) {
+      condicion += this.tokens[this.pos].value + " ";
       this.pos++;
     }
 
+    if (this.tokens[this.pos]?.value !== ")") {
+      this.errors.push(
+        new Error("Sintáctico", "while", "Falta ')' en condición", 0, 0)
+      );
+      return;
+    }
     this.pos++; // ')'
-    if (this.tokens[this.pos]?.value === ";") this.pos++;
 
-    this.pythonCode += `${this.indent}print(${contenido.trim()})\n`;
+    if (this.tokens[this.pos]?.value !== "{") {
+      this.errors.push(
+        new Error(
+          "Sintáctico",
+          "while",
+          "Se esperaba '{' después de while",
+          0,
+          0
+        )
+      );
+      return;
+    }
+    this.pos++; // '{'
+
+    // Emitir encabezado en Python
+    this.pythonCode += `${this.indent}while ${condicion.trim()}:\n`;
+
+    // Bloque interno
+    this.indent += "    ";
+    while (
+      this.pos < this.tokens.length &&
+      this.tokens[this.pos].value !== "}"
+    ) {
+      this.traducirLineaBloque();
+    }
+    this.indent = this.indent.slice(0, -4);
+
+    if (this.tokens[this.pos]?.value === "}") this.pos++;
+    else
+      this.errors.push(
+        new Error(
+          "Sintáctico",
+          "while",
+          "Se esperaba '}' al final del while",
+          0,
+          0
+        )
+      );
+  }
+
+  // ======================================================
+  // Traducción de System.out.println()
+  // (aplica regla de compatibilidad de '+' con String)
+  // ======================================================
+  traducirPrint() {
+    this.pos++; // 'System'
+    this.pos += 3; // saltar ". out ."
+
+    const println = this.tokens[this.pos];
+    if (!println || println.value !== "println") return;
+
+    this.pos++; // 'println'
+    if (this.tokens[this.pos]?.value !== "(") return;
+    this.pos++; // '('
+
+    // 1) Capturamos TODOS los tokens de la expresión hasta ')'
+    const exprTokens = this.capturarTokensHasta(")");
+
+    // Validamos ')'
+    if (this.tokens[this.pos]?.value === ")") this.pos++;
+    else
+      this.errors.push(new Error("Sintáctico", "println", "Falta ')'", 0, 0));
+
+    // Consumimos ';'
+    if (this.tokens[this.pos]?.value === ";") this.pos++;
+    else
+      this.errors.push(new Error("Sintáctico", "println", "Falta ';'", 0, 0));
+
+    // 2) Formateo de TRADUCCIÓN (NO semántica):
+    //    si hay '+' y algún literal de cadena, envolver demás segmentos en str(...)
+    const pyExpr = this.formatearConcatParaPython(exprTokens);
+
+    // 3) Emitimos el print en Python
+    this.pythonCode += `${this.indent}print(${pyExpr})\n`;
   }
 
   // ======================================================
@@ -343,9 +501,79 @@ export class Parser {
       case "SYSTEM":
         this.traducirPrint();
         break;
+
+      case "IDENTIFICADOR":
+        if (this.tokens[this.pos + 1]?.value === "=") {
+          this.traducirAsignacion();
+          break;
+        }
+        this.pos++; // si no era asignación, avanza algo para no trabarse
+        break;
+
+      case "WHILE":
+        this.traducirWhile();
+        break;
+
       default:
         this.pos++;
         break;
     }
+  }
+
+  // Captura tokens desde this.pos hasta encontrar un lexema de cierre (p.ej. ")")
+  capturarTokensHasta(cierreLex) {
+    const lista = [];
+    while (
+      this.pos < this.tokens.length &&
+      this.tokens[this.pos].value !== cierreLex
+    ) {
+      lista.push(this.tokens[this.pos]);
+      this.pos++;
+    }
+    return lista;
+  }
+
+  // Dado un arreglo de tokens plano, aplica la "regla de concatenación" solo si hay '+' y cadenas literales.
+  formatearConcatParaPython(tokensPlano) {
+    // 1) Reconstruir expresión plana (respetando tus tipos)
+    const partes = [];
+    let expr = "";
+    for (const tok of tokensPlano) {
+      if (tok.type === "STRING") expr += `"${tok.value}"`;
+      else if (tok.type === "CHAR") expr += `'${tok.value}'`;
+      else if (
+        tok.type === "RESERVADA" &&
+        (tok.value === "true" || tok.value === "false")
+      ) {
+        expr += tok.value === "true" ? "True" : "False";
+      } else {
+        expr += tok.value;
+      }
+      expr += " ";
+    }
+    expr = expr.trim();
+
+    // 2) Si no hay '+', o no hay comillas, no hacemos nada especial
+    const hayMas = expr.includes("+");
+    const hayCadenaLiteral = expr.includes('"') || expr.includes("'");
+    if (!hayMas || !hayCadenaLiteral) return expr;
+
+    // 3) Dividir por '+' y envolver no-cadenas en str(...)
+    //    Nota: esto es un formateo de traducción, NO semántica.
+    return expr
+      .split("+")
+      .map((segmento) => {
+        const s = segmento.trim();
+        // Si el segmento ya es cadena literal (contiene comillas al menos en el borde), lo dejamos
+        if (
+          (s.startsWith('"') && s.endsWith('"')) ||
+          (s.startsWith("'") && s.endsWith("'"))
+        ) {
+          return s;
+        }
+        // En otros casos, envolver en str(...)
+        return `str(${s})`;
+      })
+      .join(" + ");
   }
 }
